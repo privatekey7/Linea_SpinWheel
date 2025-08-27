@@ -2,6 +2,8 @@ import { chromium, BrowserContext, Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
+import { SecurityUtils } from './utils/security';
 
 export interface RabbyWalletConfig {
   privateKey: string;
@@ -13,42 +15,62 @@ export class RabbyWallet {
   private config: RabbyWalletConfig;
   private context: BrowserContext | null = null;
   private extensionId: string | null = null;
+  private tempProfile: string | null = null;
+  private sessionPassword: string | null = null;
 
   constructor(config: RabbyWalletConfig) {
     this.config = {
-      password: 'Password123',
       extensionPath: path.resolve(process.cwd(), 'Rabby-Wallet-Chrome'),
       ...config
     };
   }
 
   /**
-   * Создает временную директорию для профиля браузера
+   * Генерирует криптографически стойкий пароль для сеанса
    */
-  private createTempProfile(): string {
-    const tempDir = path.join(os.tmpdir(), `rabby_import_${Date.now()}`);
-    fs.mkdirSync(tempDir, { recursive: true });
-    return tempDir;
+  private generateSecurePassword(): string {
+    return SecurityUtils.generateSecurePassword(16);
   }
 
   /**
-   * Удаляет временную директорию
+   * Создает временную директорию для профиля браузера
    */
-  private cleanupTempProfile(tempProfile: string): void {
-    try {
-      if (fs.existsSync(tempProfile)) {
-        fs.rmSync(tempProfile, { recursive: true, force: true });
-      }
-    } catch (error) {
-      // Игнорируем ошибки очистки
+  private createTempProfile(): string {
+    return SecurityUtils.createSecureTempDir('rabby_import');
+  }
+
+  /**
+   * Безопасная очистка временной директории с перезаписью данных
+   */
+  private async secureCleanupTempProfile(tempProfile: string): Promise<void> {
+    await SecurityUtils.secureDeleteDirectory(tempProfile);
+  }
+
+  /**
+   * Очистка чувствительных данных из памяти
+   */
+  private clearSensitiveData(): void {
+    // Очищаем пароль из памяти
+    if (this.sessionPassword) {
+      this.sessionPassword = null;
     }
+    
+    // Очищаем чувствительные данные из конфигурации
+    SecurityUtils.clearSensitiveObject(this.config, ['privateKey', 'password', 'secret']);
+    
+    // Очищаем extensionId
+    this.extensionId = null;
   }
 
   /**
    * Инициализация браузера с расширением Rabby
    */
   async initialize(): Promise<void> {
-    const tempProfile = this.createTempProfile();
+    // Генерируем уникальный пароль для этого сеанса
+    this.sessionPassword = this.generateSecurePassword();
+    console.log('🔐 Сгенерирован новый безопасный пароль для сеанса');
+    
+    this.tempProfile = this.createTempProfile();
     
     try {
       // Запуск браузера с расширением
@@ -57,10 +79,14 @@ export class RabbyWallet {
         `--load-extension=${this.config.extensionPath}`,
         "--disable-blink-features=AutomationControlled",
         "--no-first-run",
-        "--disable-web-security"
+        "--disable-web-security",
+        "--disable-features=VizDisplayCompositor", // Дополнительная безопасность
+        "--disable-dev-shm-usage", // Избегаем использования /dev/shm
+        "--no-sandbox", // Только для временных профилей
+        "--disable-setuid-sandbox"
       ];
       
-      this.context = await chromium.launchPersistentContext(tempProfile, {
+      this.context = await chromium.launchPersistentContext(this.tempProfile, {
         headless: false,
         args: chromeArgs,
         ignoreDefaultArgs: ["--disable-extensions"],
@@ -73,7 +99,7 @@ export class RabbyWallet {
       await this.findExtension();
       
     } catch (error) {
-      this.cleanupTempProfile(tempProfile);
+      await this.cleanup();
       throw error;
     }
   }
@@ -136,8 +162,8 @@ export class RabbyWallet {
    * Импорт кошелька в Rabby
    */
   async importWallet(): Promise<string> {
-    if (!this.context || !this.extensionId) {
-      throw new Error("Браузер не инициализирован");
+    if (!this.context || !this.extensionId || !this.sessionPassword) {
+      throw new Error("Браузер не инициализирован или пароль не сгенерирован");
     }
     
     // Используем приватный ключ из конфигурации
@@ -187,15 +213,15 @@ export class RabbyWallet {
       await page.waitForSelector(confirmButtonSelector, { timeout: 30000 });
       await page.click(confirmButtonSelector);
       
-      // Шаг 5: Ждём поле ввода пароля и вводим пароль
+      // Шаг 5: Ждём поле ввода пароля и вводим сгенерированный пароль
       const passwordInput = '#password';
       await page.waitForSelector(passwordInput, { timeout: 30000 });
       await page.click(passwordInput);
-      await page.fill(passwordInput, this.config.password!);
+      await page.fill(passwordInput, this.sessionPassword);
       
       // Переходим на следующее поле подтверждения пароля через Tab
       await page.press(passwordInput, 'Tab');
-      await page.keyboard.type(this.config.password!);
+      await page.keyboard.type(this.sessionPassword);
       
       // Шаг 6: Ждём активации второй кнопки Confirm и кликаем
       const passwordConfirmButton = 'button:has-text("Confirm"):not([disabled])';
@@ -254,13 +280,35 @@ export class RabbyWallet {
   }
 
   /**
-   * Закрытие браузера
+   * Полная очистка ресурсов и чувствительных данных
+   */
+  async cleanup(): Promise<void> {
+    try {
+      // Закрываем браузер
+      if (this.context) {
+        await this.context.close();
+        this.context = null;
+      }
+      
+      // Очищаем чувствительные данные из памяти
+      this.clearSensitiveData();
+      
+      // Безопасно очищаем временный профиль
+      if (this.tempProfile) {
+        await this.secureCleanupTempProfile(this.tempProfile);
+        this.tempProfile = null;
+      }
+      
+      console.log('🔒 Все ресурсы и чувствительные данные очищены');
+    } catch (error) {
+      console.error('⚠️ Ошибка при очистке ресурсов:', error);
+    }
+  }
+
+  /**
+   * Закрытие браузера (устаревший метод, используйте cleanup)
    */
   async close(): Promise<void> {
-    if (this.context) {
-      await this.context.close();
-      this.context = null;
-      this.extensionId = null;
-    }
+    await this.cleanup();
   }
 }

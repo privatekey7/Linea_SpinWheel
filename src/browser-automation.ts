@@ -726,7 +726,7 @@ export class LineaSpinWheelBot {
 
 
   /**
-   * Закрытие браузера
+   * Закрытие браузера с полной очисткой чувствительных данных
    */
   async close(): Promise<void> {
     try {
@@ -736,7 +736,7 @@ export class LineaSpinWheelBot {
       }
       
       if (this.rabbyWallet) {
-        await this.rabbyWallet.close();
+        await this.rabbyWallet.cleanup();
         this.rabbyWallet = null;
       }
       
@@ -749,6 +749,8 @@ export class LineaSpinWheelBot {
         await this.browser.close();
         this.browser = null;
       }
+
+      console.log('🔒 Браузер закрыт и все чувствительные данные очищены');
 
     } catch (error) {
       console.error('❌ Ошибка закрытия браузера:', error);
