@@ -1,6 +1,6 @@
 {
   "name": "linea-spinwheel",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Linea Rewards Spin Wheel Automation",
   "main": "dist/index.js",
   "scripts": {
