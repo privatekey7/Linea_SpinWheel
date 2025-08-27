@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "stats": "ts-node src/view-wallet-data.ts",
-    "postinstall": "playwright install"
+    "postinstall": "playwright install && npm run build"
   },
   "dependencies": {
     "@types/readline-sync": "^1.4.8",
