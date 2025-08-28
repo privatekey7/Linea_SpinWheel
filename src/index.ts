@@ -234,10 +234,14 @@ async function processWallet(privateKey: string, walletIndex: number, totalWalle
     const today = new Date().toISOString().split('T')[0];
     const dailyTransferDoneToday = existingWalletData?.lastTransferDate === today;
     
-    // Проверяем, полностью ли отработал кошелёк сегодня (ежедневная транзакция + 0 спинов)
+    // Проверяем, нужно ли обновить спины на новый день
+    const shouldRefreshSpins = existingWalletData ? database.shouldRefreshSpinsForNewDay(walletConfig.address) : true;
+    
+    // Проверяем, полностью ли отработал кошелёк сегодня (ежедневная транзакция + 0 спинов + не нужно обновлять спины)
     const walletFullyCompletedToday = existingWalletData && 
       dailyTransferDoneToday && 
-      existingWalletData.spinsAvailable === 0;
+      existingWalletData.spinsAvailable === 0 &&
+      !shouldRefreshSpins;
     
     if (walletFullyCompletedToday) {
       console.log('✅ Кошелёк уже полностью отработал сегодня (ежедневная транзакция выполнена + спины закончились) - пропускаем');
@@ -250,9 +254,13 @@ async function processWallet(privateKey: string, walletIndex: number, totalWalle
     }
     
     // Если ежедневная транзакция выполнена сегодня, но данные о спинах могут быть устаревшими
-    // Нужно обновить данные из карточки
-    if (existingWalletData && !isNewDay && hasFullData && dailyTransferDoneToday) {
-      console.log('🔄 Ежедневная транзакция выполнена сегодня - обновляем данные о спинах из карточки');
+    // или нужно обновить спины на новый день
+    if (existingWalletData && !isNewDay && hasFullData && (dailyTransferDoneToday || shouldRefreshSpins)) {
+      if (shouldRefreshSpins) {
+        console.log('🔄 Время обновления спинов наступило - обновляем данные из карточки');
+      } else {
+        console.log('🔄 Ежедневная транзакция выполнена сегодня - обновляем данные о спинах из карточки');
+      }
       
       // Создаём бота для обновления данных
       bot = new LineaSpinWheelBot(walletConfig);
@@ -281,8 +289,8 @@ async function processWallet(privateKey: string, walletIndex: number, totalWalle
         console.log('⏰ После обновления данных спинов не найдено');
         spinsPerformed = false;
       }
-    } else if (existingWalletData && !isNewDay && hasFullData) {
-      // Если кошелёк есть в базе и это не новый день, проверяем доступные спины
+    } else if (existingWalletData && !isNewDay && hasFullData && !shouldRefreshSpins) {
+      // Если кошелёк есть в базе, это не новый день и не нужно обновлять спины, проверяем доступные спины
       const spinsAvailable = await checkSpinsAvailableToday(database, walletConfig.address);
       
       if (spinsAvailable) {
@@ -309,11 +317,13 @@ async function processWallet(privateKey: string, walletIndex: number, totalWalle
         spinsPerformed = false;
       }
     } else {
-      // Если кошелька нет в базе, наступил новый день или нет полных данных - обновляем данные из карточки
+      // Если кошелька нет в базе, наступил новый день, нужно обновить спины или нет полных данных - обновляем данные из карточки
       if (!existingWalletData) {
         console.log('🔍 Кошелёк не найден в базе данных, создаём новую запись');
       } else if (isNewDay) {
         console.log('🌅 Наступил новый день - обновляем данные из карточки');
+      } else if (shouldRefreshSpins) {
+        console.log('⏰ Время обновления спинов наступило - обновляем данные из карточки');
       } else {
         console.log('📊 У кошелька нет полных данных - получаем данные из карточки');
       }

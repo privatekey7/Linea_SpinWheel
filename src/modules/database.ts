@@ -20,6 +20,7 @@ export interface WalletData {
   todayTransfer?: boolean;
   lastTransferDate?: string;
   transferAmount?: string;
+  lastSpinDate?: string;
 }
 
 export interface DatabaseConfig {
@@ -118,9 +119,12 @@ export class WalletDatabase {
       if (oldData.dayStreak !== walletData.dayStreak && walletData.dayStreak !== undefined) {
         changes.push(`стрик: ${oldData.dayStreak} → ${walletData.dayStreak}`);
       }
-      if (oldData.nextSpinTime !== walletData.nextSpinTime && walletData.nextSpinTime) {
-        changes.push(`время спина: ${oldData.nextSpinTime} → ${walletData.nextSpinTime}`);
-      }
+             if (oldData.nextSpinTime !== walletData.nextSpinTime && walletData.nextSpinTime) {
+         changes.push(`время спина: ${oldData.nextSpinTime} → ${walletData.nextSpinTime}`);
+       }
+       if (oldData.lastSpinDate !== walletData.lastSpinDate && walletData.lastSpinDate) {
+         changes.push(`дата спина: ${oldData.lastSpinDate} → ${walletData.lastSpinDate}`);
+       }
       
     } else {
       // Добавляем новый кошелёк
@@ -239,6 +243,46 @@ export class WalletDatabase {
   }
 
   /**
+   * Проверка, нужно ли обновить спины на новый день
+   * Спины сбрасываются в 3:00 UTC каждый день
+   */
+  shouldRefreshSpinsForNewDay(address: string): boolean {
+    const walletData = this.getWalletDataSync(address);
+    if (!walletData) {
+      return true; // Если кошелька нет в базе, считаем что нужно обновить данные
+    }
+
+    const now = new Date();
+    const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    // Если нет данных о последнем спине, считаем что нужно обновить
+    if (!walletData.lastSpinDate) {
+      return true;
+    }
+    
+    // Проверяем дату последнего спина
+    const lastSpinDate = walletData.lastSpinDate.split('T')[0];
+    
+    // Если последний спин был не сегодня - нужно обновить спины
+    if (lastSpinDate !== today) {
+      return true;
+    }
+    
+    // Если последний спин был сегодня, проверяем время
+    const lastSpin = new Date(walletData.lastSpinDate);
+    const nowUTC = new Date();
+    const nowUTCHours = nowUTC.getUTCHours();
+    const lastSpinUTCHours = lastSpin.getUTCHours();
+    
+    // Если сейчас после 3:00 UTC, а последний спин был до 3:00 UTC - нужно обновить спины
+    if (nowUTCHours >= 3 && lastSpinUTCHours < 3) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
    * Сброс флага ежедневной транзакции при наступлении нового дня
    */
   resetDailyTransferFlagIfNewDay(address: string): void {
@@ -307,6 +351,22 @@ export class WalletDatabase {
   }
 
   /**
+   * Обновление времени последнего спина
+   */
+  async updateLastSpinDate(address: string): Promise<void> {
+    const data = this.loadData();
+    const walletIndex = data.wallets.findIndex(w => w.address.toLowerCase() === address.toLowerCase());
+    
+    if (walletIndex >= 0) {
+      data.wallets[walletIndex].lastSpinDate = new Date().toISOString();
+      data.wallets[walletIndex].lastActivity = new Date().toISOString();
+      data.lastUpdate = new Date().toISOString();
+      this.saveData(data);
+      console.log(`🔄 Обновлено время последнего спина для кошелька ${address}`);
+    }
+  }
+
+  /**
    * Принудительное обновление данных кошелька после спина
    */
   async forceUpdateWalletData(address: string, newData: Partial<WalletData>): Promise<void> {
@@ -336,7 +396,9 @@ export class WalletDatabase {
         }
       });
       
-
+      if (changes.length > 0) {
+        console.log(`📊 Обновлены данные кошелька ${address}: ${changes.join(', ')}`);
+      }
     }
   }
 

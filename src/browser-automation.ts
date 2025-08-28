@@ -711,7 +711,8 @@ export class LineaSpinWheelBot {
           gamesPlayed: updatedWalletData.gamesPlayed,
           dayStreak: updatedWalletData.dayStreak,
           nextSpinTime: updatedWalletData.nextSpinTime,
-          lastActivity: new Date().toISOString()
+          lastActivity: new Date().toISOString(),
+          lastSpinDate: new Date().toISOString()
         };
         
         await this.walletDatabase.updateWalletStats(this.wallet.address, statsToUpdate);
